@@ -1,0 +1,262 @@
+import React, { useState, useEffect } from 'react';
+import { Play, Pause, RotateCcw, Zap, AlertTriangle } from 'lucide-react';
+
+const ISCSIMultipathAnimation = () => {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [dataPackets, setDataPackets] = useState([]);
+  const [failedPath, setFailedPath] = useState(null);
+  const [packetId, setPacketId] = useState(0);
+
+  const steps = [
+    { title: "정상 상태", desc: "두 경로 모두 활성화되어 데이터 전송 중" },
+    { title: "로드 밸런싱", desc: "트래픽이 두 경로로 분산됨 (Round-Robin)" },
+    { title: "경로 1 장애 발생!", desc: "VMnic6 경로에 문제 발생" },
+    { title: "자동 페일오버", desc: "모든 트래픽이 VMnic7로 자동 전환" },
+    { title: "경로 복구", desc: "VMnic6 복구 후 다시 로드 밸런싱" }
+  ];
+
+  useEffect(() => {
+    if (!isPlaying) return;
+
+    const interval = setInterval(() => {
+      setCurrentStep((prev) => (prev + 1) % steps.length);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [isPlaying]);
+
+  useEffect(() => {
+    if (!isPlaying) return;
+
+    const packetInterval = setInterval(() => {
+      const newPacket = {
+        id: packetId,
+        path: currentStep === 3 ? 2 : (packetId % 2 === 0 ? 1 : 2),
+        progress: 0
+      };
+
+      if (currentStep === 2) {
+        setFailedPath(1);
+        if (newPacket.path === 1) newPacket.path = 2;
+      } else if (currentStep === 4) {
+        setFailedPath(null);
+      } else if (currentStep === 3) {
+        newPacket.path = 2;
+      }
+
+      setDataPackets(prev => [...prev, newPacket]);
+      setPacketId(prev => prev + 1);
+    }, 600);
+
+    return () => clearInterval(packetInterval);
+  }, [isPlaying, currentStep, packetId]);
+
+  useEffect(() => {
+    const animationInterval = setInterval(() => {
+      setDataPackets(prev => 
+        prev
+          .map(packet => ({...packet, progress: packet.progress + 2}))
+          .filter(packet => packet.progress < 100)
+      );
+    }, 20);
+
+    return () => clearInterval(animationInterval);
+  }, []);
+
+  const togglePlay = () => setIsPlaying(!isPlaying);
+  const reset = () => {
+    setIsPlaying(false);
+    setCurrentStep(0);
+    setDataPackets([]);
+    setFailedPath(null);
+    setPacketId(0);
+  };
+
+  const getPathColor = (path) => {
+    if (failedPath === path) return '#ef4444';
+    return path === 1 ? '#3b82f6' : '#10b981';
+  };
+
+  return (
+    <div className="w-full h-screen bg-gradient-to-br from-gray-900 to-gray-800 text-white p-8 overflow-hidden">
+      <div className="max-w-7xl mx-auto">
+        <h1 className="text-4xl font-bold mb-2 text-center bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">
+          ESXi iSCSI 다중 경로 (Multipath) 동작 원리
+        </h1>
+        <p className="text-center text-gray-400 mb-6">실시간 데이터 흐름 및 페일오버 시뮬레이션</p>
+
+        {/* 제어 패널 */}
+        <div className="bg-gray-800 rounded-lg p-4 mb-6 flex items-center justify-between border border-gray-700">
+          <div className="flex gap-3">
+            <button
+              onClick={togglePlay}
+              className="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg flex items-center gap-2 transition-colors"
+            >
+              {isPlaying ? <Pause size={20} /> : <Play size={20} />}
+              {isPlaying ? '일시정지' : '시작'}
+            </button>
+            <button
+              onClick={reset}
+              className="bg-gray-700 hover:bg-gray-600 px-6 py-2 rounded-lg flex items-center gap-2 transition-colors"
+            >
+              <RotateCcw size={20} />
+              초기화
+            </button>
+          </div>
+          <div className="text-right">
+            <div className="text-sm text-gray-400">현재 단계: {currentStep + 1} / {steps.length}</div>
+            <div className="text-lg font-semibold text-blue-400">{steps[currentStep].title}</div>
+          </div>
+        </div>
+
+        {/* 메인 애니메이션 영역 */}
+        <div className="relative bg-gray-800 rounded-lg p-8 border border-gray-700 mb-6" style={{height: '500px'}}>
+          {/* ESXi 호스트 */}
+          <div className="absolute left-12 top-1/2 transform -translate-y-1/2">
+            <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg p-6 shadow-2xl border-2 border-blue-500">
+              <div className="text-center mb-3">
+                <div className="text-2xl font-bold">ESXi 호스트</div>
+                <div className="text-sm text-blue-200">10.10.10.111 / .112</div>
+              </div>
+              <div className="space-y-2">
+                <div className={`px-4 py-2 rounded ${failedPath === 1 ? 'bg-red-600' : 'bg-blue-500'}`}>
+                  <div className="flex items-center gap-2">
+                    {failedPath === 1 && <AlertTriangle size={16} />}
+                    <span className="font-semibold">VMnic6</span>
+                  </div>
+                  <div className="text-xs">iSCSI-NIC1</div>
+                </div>
+                <div className="bg-emerald-600 px-4 py-2 rounded">
+                  <div className="font-semibold">VMnic7</div>
+                  <div className="text-xs">iSCSI-NIC2</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* iSCSI Target */}
+          <div className="absolute right-12 top-1/2 transform -translate-y-1/2">
+            <div className="bg-gradient-to-br from-purple-600 to-purple-700 rounded-lg p-6 shadow-2xl border-2 border-purple-500">
+              <div className="text-center mb-3">
+                <div className="text-2xl font-bold">iSCSI Target</div>
+                <div className="text-sm text-purple-200">10.10.10.100</div>
+              </div>
+              <div className="bg-purple-500 px-4 py-3 rounded">
+                <div className="font-semibold mb-1">스토리지 LUN</div>
+                <div className="text-xs space-y-1">
+                  <div>✓ 2개 경로 감지</div>
+                  <div>✓ MPIO 활성화</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 네트워크 경로 */}
+          <svg className="absolute inset-0 w-full h-full pointer-events-none">
+            {/* Path 1 - VMnic6 */}
+            <path
+              d="M 230 200 Q 450 150, 670 240"
+              fill="none"
+              stroke={getPathColor(1)}
+              strokeWidth={failedPath === 1 ? "8" : "6"}
+              strokeDasharray={failedPath === 1 ? "10,5" : "0"}
+              opacity={failedPath === 1 ? "0.3" : "0.6"}
+            />
+            <text x="440" y="140" fill={getPathColor(1)} fontSize="14" fontWeight="bold">
+              경로 1 (VMnic6)
+            </text>
+
+            {/* Path 2 - VMnic7 */}
+            <path
+              d="M 230 300 Q 450 350, 670 260"
+              fill="none"
+              stroke={getPathColor(2)}
+              strokeWidth="6"
+              opacity="0.6"
+            />
+            <text x="440" y="370" fill={getPathColor(2)} fontSize="14" fontWeight="bold">
+              경로 2 (VMnic7)
+            </text>
+
+            {/* 데이터 패킷 애니메이션 */}
+            {dataPackets.map(packet => {
+              const yPos = packet.path === 1 ? 200 : 300;
+              const yControl = packet.path === 1 ? 150 : 350;
+              const x = 230 + (packet.progress / 100) * 440;
+              const y = yPos + (yControl - yPos) * Math.sin((packet.progress / 100) * Math.PI);
+
+              return (
+                <g key={packet.id}>
+                  <circle
+                    cx={x}
+                    cy={y}
+                    r="8"
+                    fill={getPathColor(packet.path)}
+                    opacity="0.9"
+                  />
+                  <circle
+                    cx={x}
+                    cy={y}
+                    r="12"
+                    fill={getPathColor(packet.path)}
+                    opacity="0.3"
+                  />
+                </g>
+              );
+            })}
+          </svg>
+
+          {/* 장애 알림 */}
+          {failedPath === 1 && (
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-600 px-6 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-pulse">
+              <AlertTriangle size={24} />
+              <span className="font-bold">경로 1 장애 감지! 페일오버 진행 중...</span>
+            </div>
+          )}
+        </div>
+
+        {/* 상태 설명 */}
+        <div className="grid grid-cols-3 gap-4">
+          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <div className="flex items-center gap-2 mb-2">
+              <Zap className="text-blue-400" size={20} />
+              <h3 className="font-bold text-blue-400">현재 동작</h3>
+            </div>
+            <p className="text-sm text-gray-300">{steps[currentStep].desc}</p>
+          </div>
+
+          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <h3 className="font-bold text-emerald-400 mb-2">경로 상태</h3>
+            <div className="space-y-1 text-sm">
+              <div className={failedPath === 1 ? 'text-red-400' : 'text-blue-400'}>
+                VMnic6: {failedPath === 1 ? '❌ 장애' : '✅ 정상'}
+              </div>
+              <div className="text-emerald-400">VMnic7: ✅ 정상</div>
+            </div>
+          </div>
+
+          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <h3 className="font-bold text-purple-400 mb-2">MPIO 정책</h3>
+            <div className="text-sm text-gray-300">
+              {currentStep === 3 ? 'Fixed (고정 경로)' : 'Round-Robin (순환)'}
+            </div>
+          </div>
+        </div>
+
+        {/* 하단 설명 */}
+        <div className="mt-6 bg-gray-800 rounded-lg p-4 border border-gray-700">
+          <h3 className="font-bold text-yellow-400 mb-2">💡 동작 원리</h3>
+          <div className="text-sm text-gray-300 space-y-1">
+            <p>• <strong>정상 시:</strong> MPIO가 두 경로로 I/O 요청을 분산하여 성능 향상</p>
+            <p>• <strong>장애 시:</strong> 장애 경로를 자동 감지하고 정상 경로로 모든 트래픽 전환 (수 초 이내)</p>
+            <p>• <strong>복구 시:</strong> 경로가 복구되면 자동으로 다시 로드 밸런싱 시작</p>
+            <p>• <strong>투명성:</strong> VM과 애플리케이션은 경로 전환을 인지하지 못함 (무중단)</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default ISCSIMultipathAnimation;
