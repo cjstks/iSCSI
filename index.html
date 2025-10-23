@@ -1,262 +1,569 @@
-import React, { useState, useEffect } from 'react';
-import { Play, Pause, RotateCcw, Zap, AlertTriangle } from 'lucide-react';
-
-const ISCSIMultipathAnimation = () => {
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentStep, setCurrentStep] = useState(0);
-  const [dataPackets, setDataPackets] = useState([]);
-  const [failedPath, setFailedPath] = useState(null);
-  const [packetId, setPacketId] = useState(0);
-
-  const steps = [
-    { title: "정상 상태", desc: "두 경로 모두 활성화되어 데이터 전송 중" },
-    { title: "로드 밸런싱", desc: "트래픽이 두 경로로 분산됨 (Round-Robin)" },
-    { title: "경로 1 장애 발생!", desc: "VMnic6 경로에 문제 발생" },
-    { title: "자동 페일오버", desc: "모든 트래픽이 VMnic7로 자동 전환" },
-    { title: "경로 복구", desc: "VMnic6 복구 후 다시 로드 밸런싱" }
-  ];
-
-  useEffect(() => {
-    if (!isPlaying) return;
-
-    const interval = setInterval(() => {
-      setCurrentStep((prev) => (prev + 1) % steps.length);
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [isPlaying]);
-
-  useEffect(() => {
-    if (!isPlaying) return;
-
-    const packetInterval = setInterval(() => {
-      const newPacket = {
-        id: packetId,
-        path: currentStep === 3 ? 2 : (packetId % 2 === 0 ? 1 : 2),
-        progress: 0
-      };
-
-      if (currentStep === 2) {
-        setFailedPath(1);
-        if (newPacket.path === 1) newPacket.path = 2;
-      } else if (currentStep === 4) {
-        setFailedPath(null);
-      } else if (currentStep === 3) {
-        newPacket.path = 2;
-      }
-
-      setDataPackets(prev => [...prev, newPacket]);
-      setPacketId(prev => prev + 1);
-    }, 600);
-
-    return () => clearInterval(packetInterval);
-  }, [isPlaying, currentStep, packetId]);
-
-  useEffect(() => {
-    const animationInterval = setInterval(() => {
-      setDataPackets(prev => 
-        prev
-          .map(packet => ({...packet, progress: packet.progress + 2}))
-          .filter(packet => packet.progress < 100)
-      );
-    }, 20);
-
-    return () => clearInterval(animationInterval);
-  }, []);
-
-  const togglePlay = () => setIsPlaying(!isPlaying);
-  const reset = () => {
-    setIsPlaying(false);
-    setCurrentStep(0);
-    setDataPackets([]);
-    setFailedPath(null);
-    setPacketId(0);
-  };
-
-  const getPathColor = (path) => {
-    if (failedPath === path) return '#ef4444';
-    return path === 1 ? '#3b82f6' : '#10b981';
-  };
-
-  return (
-    <div className="w-full h-screen bg-gradient-to-br from-gray-900 to-gray-800 text-white p-8 overflow-hidden">
-      <div className="max-w-7xl mx-auto">
-        <h1 className="text-4xl font-bold mb-2 text-center bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">
-          ESXi iSCSI 다중 경로 (Multipath) 동작 원리
-        </h1>
-        <p className="text-center text-gray-400 mb-6">실시간 데이터 흐름 및 페일오버 시뮬레이션</p>
-
-        {/* 제어 패널 */}
-        <div className="bg-gray-800 rounded-lg p-4 mb-6 flex items-center justify-between border border-gray-700">
-          <div className="flex gap-3">
-            <button
-              onClick={togglePlay}
-              className="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg flex items-center gap-2 transition-colors"
-            >
-              {isPlaying ? <Pause size={20} /> : <Play size={20} />}
-              {isPlaying ? '일시정지' : '시작'}
-            </button>
-            <button
-              onClick={reset}
-              className="bg-gray-700 hover:bg-gray-600 px-6 py-2 rounded-lg flex items-center gap-2 transition-colors"
-            >
-              <RotateCcw size={20} />
-              초기화
-            </button>
-          </div>
-          <div className="text-right">
-            <div className="text-sm text-gray-400">현재 단계: {currentStep + 1} / {steps.length}</div>
-            <div className="text-lg font-semibold text-blue-400">{steps[currentStep].title}</div>
-          </div>
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESXi iSCSI 다중 경로 동작 시뮬레이션</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lucide/0.263.1/umd/lucide.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: white;
+            overflow-x: hidden;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        .title {
+            font-size: 2.5rem;
+            font-weight: bold;
+            background: linear-gradient(90deg, #60a5fa, #34d399);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: #9ca3af;
+            font-size: 1.1rem;
+        }
+        
+        .controls {
+            background: #1f2937;
+            border: 1px solid #374151;
+            border-radius: 12px;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 15px;
+        }
+        
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s;
+        }
+        
+        .btn-play {
+            background: #2563eb;
+            color: white;
+        }
+        
+        .btn-play:hover {
+            background: #1d4ed8;
+        }
+        
+        .btn-reset {
+            background: #374151;
+            color: white;
+        }
+        
+        .btn-reset:hover {
+            background: #4b5563;
+        }
+        
+        .status-info {
+            text-align: right;
+        }
+        
+        .step-number {
+            font-size: 0.9rem;
+            color: #9ca3af;
+            margin-bottom: 5px;
+        }
+        
+        .step-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #60a5fa;
+        }
+        
+        .animation-area {
+            background: #1f2937;
+            border: 1px solid #374151;
+            border-radius: 12px;
+            padding: 40px;
+            height: 500px;
+            position: relative;
+            margin-bottom: 30px;
+        }
+        
+        .esxi-host {
+            position: absolute;
+            left: 50px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            border: 2px solid #3b82f6;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(37, 99, 235, 0.3);
+        }
+        
+        .esxi-title {
+            text-align: center;
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .esxi-ip {
+            text-align: center;
+            font-size: 0.9rem;
+            color: #bfdbfe;
+            margin-bottom: 15px;
+        }
+        
+        .nic-card {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+        
+        .nic-card.active {
+            background: #3b82f6;
+        }
+        
+        .nic-card.failed {
+            background: #ef4444;
+        }
+        
+        .nic-card.standby {
+            background: #10b981;
+        }
+        
+        .nic-name {
+            font-weight: bold;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .nic-label {
+            font-size: 0.8rem;
+            opacity: 0.9;
+        }
+        
+        .target-storage {
+            position: absolute;
+            right: 50px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: linear-gradient(135deg, #9333ea, #7e22ce);
+            border: 2px solid #a855f7;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(147, 51, 234, 0.3);
+        }
+        
+        .target-title {
+            text-align: center;
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .target-ip {
+            text-align: center;
+            font-size: 0.9rem;
+            color: #e9d5ff;
+            margin-bottom: 15px;
+        }
+        
+        .lun-info {
+            background: #a855f7;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        
+        .lun-title {
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        
+        .lun-status {
+            font-size: 0.85rem;
+            line-height: 1.6;
+        }
+        
+        .alert-banner {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #ef4444;
+            padding: 15px 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(239, 68, 68, 0.4);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: bold;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .info-card {
+            background: #1f2937;
+            border: 1px solid #374151;
+            border-radius: 12px;
+            padding: 20px;
+        }
+        
+        .info-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        
+        .info-title {
+            font-weight: bold;
+            font-size: 1rem;
+        }
+        
+        .info-content {
+            color: #d1d5db;
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+        
+        .description-box {
+            background: #1f2937;
+            border: 1px solid #374151;
+            border-radius: 12px;
+            padding: 20px;
+        }
+        
+        .desc-title {
+            color: #fbbf24;
+            font-weight: bold;
+            font-size: 1.1rem;
+            margin-bottom: 15px;
+        }
+        
+        .desc-list {
+            color: #d1d5db;
+            font-size: 0.95rem;
+            line-height: 2;
+        }
+        
+        .packet {
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            pointer-events: none;
+        }
+        
+        .packet-glow {
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            opacity: 0.3;
+            margin: -4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 class="title">ESXi iSCSI 다중 경로 (Multipath) 동작 원리</h1>
+            <p class="subtitle">실시간 데이터 흐름 및 페일오버 시뮬레이션</p>
         </div>
-
-        {/* 메인 애니메이션 영역 */}
-        <div className="relative bg-gray-800 rounded-lg p-8 border border-gray-700 mb-6" style={{height: '500px'}}>
-          {/* ESXi 호스트 */}
-          <div className="absolute left-12 top-1/2 transform -translate-y-1/2">
-            <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg p-6 shadow-2xl border-2 border-blue-500">
-              <div className="text-center mb-3">
-                <div className="text-2xl font-bold">ESXi 호스트</div>
-                <div className="text-sm text-blue-200">10.10.10.111 / .112</div>
-              </div>
-              <div className="space-y-2">
-                <div className={`px-4 py-2 rounded ${failedPath === 1 ? 'bg-red-600' : 'bg-blue-500'}`}>
-                  <div className="flex items-center gap-2">
-                    {failedPath === 1 && <AlertTriangle size={16} />}
-                    <span className="font-semibold">VMnic6</span>
-                  </div>
-                  <div className="text-xs">iSCSI-NIC1</div>
+        
+        <div class="controls">
+            <div class="btn-group">
+                <button class="btn-play" onclick="togglePlay()">
+                    <span id="playIcon">▶</span>
+                    <span id="playText">시작</span>
+                </button>
+                <button class="btn-reset" onclick="reset()">
+                    <span>↻</span>
+                    <span>초기화</span>
+                </button>
+            </div>
+            <div class="status-info">
+                <div class="step-number">현재 단계: <span id="currentStepNum">1</span> / 5</div>
+                <div class="step-title" id="stepTitle">정상 상태</div>
+            </div>
+        </div>
+        
+        <div class="animation-area" id="animationArea">
+            <div class="esxi-host">
+                <div class="esxi-title">ESXi 호스트</div>
+                <div class="esxi-ip">10.10.10.111 / .112</div>
+                <div class="nic-card active" id="nic1">
+                    <div class="nic-name">
+                        <span id="nic1Icon"></span>
+                        <span>VMnic6</span>
+                    </div>
+                    <div class="nic-label">iSCSI-NIC1</div>
                 </div>
-                <div className="bg-emerald-600 px-4 py-2 rounded">
-                  <div className="font-semibold">VMnic7</div>
-                  <div className="text-xs">iSCSI-NIC2</div>
+                <div class="nic-card standby" id="nic2">
+                    <div class="nic-name">VMnic7</div>
+                    <div class="nic-label">iSCSI-NIC2</div>
                 </div>
-              </div>
             </div>
-          </div>
-
-          {/* iSCSI Target */}
-          <div className="absolute right-12 top-1/2 transform -translate-y-1/2">
-            <div className="bg-gradient-to-br from-purple-600 to-purple-700 rounded-lg p-6 shadow-2xl border-2 border-purple-500">
-              <div className="text-center mb-3">
-                <div className="text-2xl font-bold">iSCSI Target</div>
-                <div className="text-sm text-purple-200">10.10.10.100</div>
-              </div>
-              <div className="bg-purple-500 px-4 py-3 rounded">
-                <div className="font-semibold mb-1">스토리지 LUN</div>
-                <div className="text-xs space-y-1">
-                  <div>✓ 2개 경로 감지</div>
-                  <div>✓ MPIO 활성화</div>
+            
+            <div class="target-storage">
+                <div class="target-title">iSCSI Target</div>
+                <div class="target-ip">10.10.10.100</div>
+                <div class="lun-info">
+                    <div class="lun-title">스토리지 LUN</div>
+                    <div class="lun-status">
+                        ✓ 2개 경로 감지<br>
+                        ✓ MPIO 활성화
+                    </div>
                 </div>
-              </div>
             </div>
-          </div>
-
-          {/* 네트워크 경로 */}
-          <svg className="absolute inset-0 w-full h-full pointer-events-none">
-            {/* Path 1 - VMnic6 */}
-            <path
-              d="M 230 200 Q 450 150, 670 240"
-              fill="none"
-              stroke={getPathColor(1)}
-              strokeWidth={failedPath === 1 ? "8" : "6"}
-              strokeDasharray={failedPath === 1 ? "10,5" : "0"}
-              opacity={failedPath === 1 ? "0.3" : "0.6"}
-            />
-            <text x="440" y="140" fill={getPathColor(1)} fontSize="14" fontWeight="bold">
-              경로 1 (VMnic6)
-            </text>
-
-            {/* Path 2 - VMnic7 */}
-            <path
-              d="M 230 300 Q 450 350, 670 260"
-              fill="none"
-              stroke={getPathColor(2)}
-              strokeWidth="6"
-              opacity="0.6"
-            />
-            <text x="440" y="370" fill={getPathColor(2)} fontSize="14" fontWeight="bold">
-              경로 2 (VMnic7)
-            </text>
-
-            {/* 데이터 패킷 애니메이션 */}
-            {dataPackets.map(packet => {
-              const yPos = packet.path === 1 ? 200 : 300;
-              const yControl = packet.path === 1 ? 150 : 350;
-              const x = 230 + (packet.progress / 100) * 440;
-              const y = yPos + (yControl - yPos) * Math.sin((packet.progress / 100) * Math.PI);
-
-              return (
-                <g key={packet.id}>
-                  <circle
-                    cx={x}
-                    cy={y}
-                    r="8"
-                    fill={getPathColor(packet.path)}
-                    opacity="0.9"
-                  />
-                  <circle
-                    cx={x}
-                    cy={y}
-                    r="12"
-                    fill={getPathColor(packet.path)}
-                    opacity="0.3"
-                  />
-                </g>
-              );
-            })}
-          </svg>
-
-          {/* 장애 알림 */}
-          {failedPath === 1 && (
-            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-600 px-6 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-pulse">
-              <AlertTriangle size={24} />
-              <span className="font-bold">경로 1 장애 감지! 페일오버 진행 중...</span>
+            
+            <svg id="pathsSvg" style="position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;">
+                <path id="path1" d="M 230 200 Q 450 150, 670 240" fill="none" stroke="#3b82f6" stroke-width="6" opacity="0.6"/>
+                <text x="440" y="140" fill="#3b82f6" font-size="14" font-weight="bold">경로 1 (VMnic6)</text>
+                
+                <path id="path2" d="M 230 300 Q 450 350, 670 260" fill="none" stroke="#10b981" stroke-width="6" opacity="0.6"/>
+                <text x="440" y="370" fill="#10b981" font-size="14" font-weight="bold">경로 2 (VMnic7)</text>
+            </svg>
+            
+            <div id="alertBanner" style="display: none;" class="alert-banner">
+                <span>⚠</span>
+                <span>경로 1 장애 감지! 페일오버 진행 중...</span>
             </div>
-          )}
         </div>
-
-        {/* 상태 설명 */}
-        <div className="grid grid-cols-3 gap-4">
-          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-            <div className="flex items-center gap-2 mb-2">
-              <Zap className="text-blue-400" size={20} />
-              <h3 className="font-bold text-blue-400">현재 동작</h3>
+        
+        <div class="info-grid">
+            <div class="info-card">
+                <div class="info-header">
+                    <span style="color: #60a5fa; font-size: 1.2rem;">⚡</span>
+                    <span class="info-title" style="color: #60a5fa;">현재 동작</span>
+                </div>
+                <div class="info-content" id="currentDesc">두 경로 모두 활성화되어 데이터 전송 중</div>
             </div>
-            <p className="text-sm text-gray-300">{steps[currentStep].desc}</p>
-          </div>
-
-          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-            <h3 className="font-bold text-emerald-400 mb-2">경로 상태</h3>
-            <div className="space-y-1 text-sm">
-              <div className={failedPath === 1 ? 'text-red-400' : 'text-blue-400'}>
-                VMnic6: {failedPath === 1 ? '❌ 장애' : '✅ 정상'}
-              </div>
-              <div className="text-emerald-400">VMnic7: ✅ 정상</div>
+            
+            <div class="info-card">
+                <div class="info-header">
+                    <span class="info-title" style="color: #34d399;">경로 상태</span>
+                </div>
+                <div class="info-content">
+                    <div id="path1Status" style="color: #60a5fa;">VMnic6: ✅ 정상</div>
+                    <div style="color: #34d399;">VMnic7: ✅ 정상</div>
+                </div>
             </div>
-          </div>
-
-          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-            <h3 className="font-bold text-purple-400 mb-2">MPIO 정책</h3>
-            <div className="text-sm text-gray-300">
-              {currentStep === 3 ? 'Fixed (고정 경로)' : 'Round-Robin (순환)'}
+            
+            <div class="info-card">
+                <div class="info-header">
+                    <span class="info-title" style="color: #a855f7;">MPIO 정책</span>
+                </div>
+                <div class="info-content" id="mpioPolicy">Round-Robin (순환)</div>
             </div>
-          </div>
         </div>
-
-        {/* 하단 설명 */}
-        <div className="mt-6 bg-gray-800 rounded-lg p-4 border border-gray-700">
-          <h3 className="font-bold text-yellow-400 mb-2">💡 동작 원리</h3>
-          <div className="text-sm text-gray-300 space-y-1">
-            <p>• <strong>정상 시:</strong> MPIO가 두 경로로 I/O 요청을 분산하여 성능 향상</p>
-            <p>• <strong>장애 시:</strong> 장애 경로를 자동 감지하고 정상 경로로 모든 트래픽 전환 (수 초 이내)</p>
-            <p>• <strong>복구 시:</strong> 경로가 복구되면 자동으로 다시 로드 밸런싱 시작</p>
-            <p>• <strong>투명성:</strong> VM과 애플리케이션은 경로 전환을 인지하지 못함 (무중단)</p>
-          </div>
+        
+        <div class="description-box">
+            <div class="desc-title">💡 동작 원리</div>
+            <div class="desc-list">
+                • <strong>정상 시:</strong> MPIO가 두 경로로 I/O 요청을 분산하여 성능 향상<br>
+                • <strong>장애 시:</strong> 장애 경로를 자동 감지하고 정상 경로로 모든 트래픽 전환 (수 초 이내)<br>
+                • <strong>복구 시:</strong> 경로가 복구되면 자동으로 다시 로드 밸런싱 시작<br>
+                • <strong>투명성:</strong> VM과 애플리케이션은 경로 전환을 인지하지 못함 (무중단)
+            </div>
         </div>
-      </div>
     </div>
-  );
-};
-
-export default ISCSIMultipathAnimation;
+    
+    <script>
+        let isPlaying = false;
+        let currentStep = 0;
+        let stepInterval = null;
+        let packetInterval = null;
+        let animationInterval = null;
+        let packets = [];
+        let packetId = 0;
+        
+        const steps = [
+            { title: "정상 상태", desc: "두 경로 모두 활성화되어 데이터 전송 중", failedPath: null },
+            { title: "로드 밸런싱", desc: "트래픽이 두 경로로 분산됨 (Round-Robin)", failedPath: null },
+            { title: "경로 1 장애 발생!", desc: "VMnic6 경로에 문제 발생", failedPath: 1 },
+            { title: "자동 페일오버", desc: "모든 트래픽이 VMnic7로 자동 전환", failedPath: 1 },
+            { title: "경로 복구", desc: "VMnic6 복구 후 다시 로드 밸런싱", failedPath: null }
+        ];
+        
+        function togglePlay() {
+            isPlaying = !isPlaying;
+            document.getElementById('playIcon').textContent = isPlaying ? '⏸' : '▶';
+            document.getElementById('playText').textContent = isPlaying ? '일시정지' : '시작';
+            
+            if (isPlaying) {
+                startAnimation();
+            } else {
+                stopAnimation();
+            }
+        }
+        
+        function reset() {
+            isPlaying = false;
+            currentStep = 0;
+            packets = [];
+            packetId = 0;
+            
+            document.getElementById('playIcon').textContent = '▶';
+            document.getElementById('playText').textContent = '시작';
+            
+            stopAnimation();
+            updateStep();
+            clearPackets();
+        }
+        
+        function startAnimation() {
+            stepInterval = setInterval(() => {
+                currentStep = (currentStep + 1) % steps.length;
+                updateStep();
+            }, 3000);
+            
+            packetInterval = setInterval(createPacket, 600);
+            animationInterval = setInterval(animatePackets, 20);
+        }
+        
+        function stopAnimation() {
+            clearInterval(stepInterval);
+            clearInterval(packetInterval);
+            clearInterval(animationInterval);
+        }
+        
+        function updateStep() {
+            const step = steps[currentStep];
+            document.getElementById('currentStepNum').textContent = currentStep + 1;
+            document.getElementById('stepTitle').textContent = step.title;
+            document.getElementById('currentDesc').textContent = step.desc;
+            
+            const nic1 = document.getElementById('nic1');
+            const path1 = document.getElementById('path1');
+            const alertBanner = document.getElementById('alertBanner');
+            const path1Status = document.getElementById('path1Status');
+            const mpioPolicy = document.getElementById('mpioPolicy');
+            
+            if (step.failedPath === 1) {
+                nic1.className = 'nic-card failed';
+                nic1.querySelector('#nic1Icon').textContent = '⚠';
+                path1.setAttribute('stroke', '#ef4444');
+                path1.setAttribute('stroke-dasharray', '10,5');
+                path1.setAttribute('opacity', '0.3');
+                alertBanner.style.display = 'flex';
+                path1Status.style.color = '#ef4444';
+                path1Status.textContent = 'VMnic6: ❌ 장애';
+                mpioPolicy.textContent = currentStep === 3 ? 'Fixed (고정 경로)' : 'Round-Robin (순환)';
+            } else {
+                nic1.className = 'nic-card active';
+                nic1.querySelector('#nic1Icon').textContent = '';
+                path1.setAttribute('stroke', '#3b82f6');
+                path1.setAttribute('stroke-dasharray', '0');
+                path1.setAttribute('opacity', '0.6');
+                alertBanner.style.display = 'none';
+                path1Status.style.color = '#60a5fa';
+                path1Status.textContent = 'VMnic6: ✅ 정상';
+                mpioPolicy.textContent = 'Round-Robin (순환)';
+            }
+        }
+        
+        function createPacket() {
+            const step = steps[currentStep];
+            let path = (packetId % 2 === 0) ? 1 : 2;
+            
+            if (step.failedPath === 1) {
+                path = 2;
+            }
+            
+            const packet = {
+                id: packetId++,
+                path: path,
+                progress: 0,
+                element: null
+            };
+            
+            const packetDiv = document.createElement('div');
+            packetDiv.className = 'packet';
+            packetDiv.style.backgroundColor = path === 1 ? '#3b82f6' : '#10b981';
+            
+            const glowDiv = document.createElement('div');
+            glowDiv.className = 'packet-glow';
+            glowDiv.style.backgroundColor = path === 1 ? '#3b82f6' : '#10b981';
+            packetDiv.appendChild(glowDiv);
+            
+            document.getElementById('animationArea').appendChild(packetDiv);
+            packet.element = packetDiv;
+            
+            packets.push(packet);
+        }
+        
+        function animatePackets() {
+            packets = packets.filter(packet => {
+                packet.progress += 2;
+                
+                if (packet.progress >= 100) {
+                    packet.element.remove();
+                    return false;
+                }
+                
+                const yPos = packet.path === 1 ? 200 : 300;
+                const yControl = packet.path === 1 ? 150 : 350;
+                const x = 230 + (packet.progress / 100) * 440;
+                const y = yPos + (yControl - yPos) * Math.sin((packet.progress / 100) * Math.PI);
+                
+                packet.element.style.left = x + 'px';
+                packet.element.style.top = y + 'px';
+                
+                return true;
+            });
+        }
+        
+        function clearPackets() {
+            packets.forEach(packet => packet.element.remove());
+            packets = [];
+        }
+        
+        updateStep();
+    </script>
+</body>
+</html>
